@@ -8,7 +8,7 @@ else
     prefix=stac_checkpoints
 fi
 
-GPU_ID=2
+GPU_ID=0
 
 for seed in 1 2 3 4 5
 do

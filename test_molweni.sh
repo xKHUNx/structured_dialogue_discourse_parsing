@@ -7,7 +7,7 @@ else
     prefix=molweni_checkpoints
 fi
 
-GPU_ID=3
+GPU_ID=0
 
 for seed in 1 2 3 4 5
 do
