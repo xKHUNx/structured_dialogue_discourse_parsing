@@ -8,7 +8,7 @@ import itertools
 import tqdm
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--num_contexts", type=int)
+parser.add_argument("--num_contexts", type=int, default=None) # Allow num_contexts to be None
 parser.add_argument("--slide", type=int, default=15)
 parser.add_argument("--dir_path", type=str, required=True)
 parser.add_argument("--link_only", action='store_true')
@@ -21,6 +21,14 @@ with open(os.path.join(args.dir_path, 'relation_database.json')) as infile:
 
 with open(os.path.join(args.dir_path, 'train/train.json')) as infile:
     raw_data = json.load(infile)
+
+# Calculate max_num_contexts if not provided
+if args.num_contexts is None:
+    max_edus_length = 0
+    for data in raw_data:
+        max_edus_length = max(max_edus_length, len(data['edus']))
+    args.num_contexts = max_edus_length
+    print(f"num_contexts not provided, automatically set to max EDU length: {args.num_contexts}")
 
 for data in tqdm.tqdm(raw_data):
     relations = data['relations']
