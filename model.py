@@ -8,8 +8,11 @@ class Model(nn.Module):
     def __init__(self, config, *inputs, **kwargs):
         super().__init__()
         self.encoder = kwargs['encoder']
-        self.struct_attention = Struct_Attention(config, kwargs['link_only'])
-
+        if kwargs['link_only']:
+            self.struct_attention = Struct_Attention(config, kwargs['link_only'])
+        else:
+            self.struct_attention = Struct_Attention(config, kwargs['link_only'], num_types=kwargs['num_types'])
+    
     def encoder_inference(self, mapping):
         encoder_cache = {}
         context_pair_input_ids = []

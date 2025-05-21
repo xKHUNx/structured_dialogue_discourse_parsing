@@ -167,6 +167,25 @@ if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     set_seed(args)
 
+    # Determine num_types from relation_database.json
+    relation_database_path = os.path.join(args.data_dir, 'relation_database.json')
+    num_relation_types = 17 # Default value
+    try:
+        with open(relation_database_path) as f:
+            relation_database = json.load(f)
+        if not relation_database:
+            print(f"Warning: {relation_database_path} is empty or invalid. Using default num_types={num_relation_types}.")
+        else:
+            num_relation_types = len(list(relation_database.values()))
+        print(f"Determined num_types from {relation_database_path}: {num_relation_types}")
+    except FileNotFoundError:
+        print(f"Error: {relation_database_path} not found. Using default num_types={num_relation_types}.")
+    except json.JSONDecodeError:
+        print(f"Error: Could not decode JSON from {relation_database_path}. Using default num_types={num_relation_types}.")
+    except ValueError: # Handles max() on empty sequence if relation_database was empty and not caught by 'if not relation_database'
+        print(f"Error: relation_database at {relation_database_path} is empty or has invalid values. Using default num_types={num_relation_types}.")
+
+
     tokenizer = AutoTokenizer.from_pretrained(args.encoder_model)
     if not args.eval:
         train_dataset = SelectionDataset(os.path.join(args.data_dir, 'train.txt'), args, tokenizer)
@@ -188,7 +207,7 @@ if __name__ == '__main__':
     else:
         encoder = AutoModel.from_config(encoder_config)
 
-    model = Model(encoder_config, encoder=encoder, link_only=args.link_only).to(device)
+    model = Model(encoder_config, encoder=encoder, link_only=args.link_only, num_types=num_relation_types).to(device)
     
     if args.eval:
         state_save_path = os.path.join(args.encoder_model, 'pytorch_model.bin')

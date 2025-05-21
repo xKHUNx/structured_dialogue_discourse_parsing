@@ -10,7 +10,7 @@ import torch.nn.functional as F
 
 
 class Struct_Attention(nn.Module):
-    def __init__(self, config, link_only):
+    def __init__(self, config, link_only, num_types=17): # Add num_types parameter with a default
         super(Struct_Attention, self).__init__()
         self.tree_results = [] # for storing induced trees
         self.rnn_f = nn.LSTM(config.hidden_size, config.hidden_size, bidirectional=True, batch_first=True)
@@ -18,7 +18,7 @@ class Struct_Attention(nn.Module):
         if link_only:
             self.num_types = 1
         else:
-            self.num_types = 17
+            self.num_types = num_types # Use the passed num_types
         self.link_only = link_only
         self.transform_list = nn.ModuleList([nn.Linear(config.hidden_size*2, self.num_types)])
 
