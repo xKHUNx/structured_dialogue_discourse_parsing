@@ -22,8 +22,8 @@ do
           --gpu $GPU_ID \
           --data_dir data/diam \
           --max_num_train_contexts 20 \
-          --max_num_dev_contexts 37 \
-          --max_num_test_contexts 37 \
+          --max_num_dev_contexts 20 \
+          --max_num_test_contexts 20 \
           --num_train_epochs $epochs \
           --train_batch_size 2 \
           --learning_rate $lr \
