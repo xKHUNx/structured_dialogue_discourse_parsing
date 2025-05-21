@@ -31,9 +31,16 @@ class Model(nn.Module):
         length = context_pair_input_ids.shape[0]
         struct_vecs = []
         for i in tqdm(range(length//bs+1)):
-            if i*bs != length:
-                res = self.encoder(context_pair_input_ids[i*bs:(i+1)*bs], context_pair_input_masks[i*bs:(i+1)*bs])[0][:,0,:]
+            start_idx = i*bs
+            end_idx = min((i+1)*bs, length)  # Ensure we don't go past the length
+            if start_idx < length:  # Only process if we have data left
+                res = self.encoder(context_pair_input_ids[start_idx:end_idx], 
+                                 context_pair_input_masks[start_idx:end_idx])[0][:,0,:]
                 struct_vecs.append(res.cpu())
+        
+        if not struct_vecs:  # Handle empty case
+            return {}
+            
         struct_vecs = torch.cat(struct_vecs, 0)
         for key, sv in zip(keys, struct_vecs):
             encoder_cache[key] = sv
