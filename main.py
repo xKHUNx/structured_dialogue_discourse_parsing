@@ -207,16 +207,20 @@ if __name__ == '__main__':
     else:
         encoder = AutoModel.from_config(encoder_config)
 
-    model = Model(encoder_config, encoder=encoder, link_only=args.link_only, num_types=num_relation_types).to(device)
-    
+    # Modify the model initialization part
     if args.eval:
+        # When evaluating, always load model with full relation types regardless of link_only flag
+        model = Model(encoder_config, encoder=encoder, link_only=False, num_types=num_relation_types).to(device)
         state_save_path = os.path.join(args.encoder_model, 'pytorch_model.bin')
         print('Loading parameters from', state_save_path)
         model.load_state_dict(torch.load(state_save_path, map_location=torch.device('cpu')))
         test_result = eval_running_model(test_dataloader, 'test')
         print(test_result)
         exit()
-        
+    else:
+        # For training, use link_only as specified
+        model = Model(encoder_config, encoder=encoder, link_only=args.link_only, num_types=num_relation_types).to(device)
+    
     no_decay = ["bias", "LayerNorm.weight"]
     optimizer_grouped_parameters = [
         {
