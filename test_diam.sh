@@ -2,7 +2,7 @@ export CUBLAS_WORKSPACE_CONFIG=:16:8 # to eliminate LSTM non-deterministic
 
 if [[ "$1" == "--link_only" ]]
 then
-    prefix=diam_link_only_checkpoints
+    prefix=diam_checkpoints
 else
     prefix=diam_checkpoints
 fi
