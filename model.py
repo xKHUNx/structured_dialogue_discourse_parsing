@@ -30,20 +30,10 @@ class Model(nn.Module):
         bs = 2000 # depends on gpu mem
         length = context_pair_input_ids.shape[0]
         struct_vecs = []
-        
-        # Handle empty case
-        if length == 0:
-            return encoder_cache
-            
-        # Fix batch processing logic
-        num_batches = (length + bs - 1) // bs  # Ceiling division
-        for i in tqdm(range(num_batches)):
-            start_idx = i * bs
-            end_idx = min((i + 1) * bs, length)
-            res = self.encoder(context_pair_input_ids[start_idx:end_idx], 
-                             context_pair_input_masks[start_idx:end_idx])[0][:,0,:]
-            struct_vecs.append(res.cpu())
-        
+        for i in tqdm(range(length//bs+1)):
+            if i*bs != length:
+                res = self.encoder(context_pair_input_ids[i*bs:(i+1)*bs], context_pair_input_masks[i*bs:(i+1)*bs])[0][:,0,:]
+                struct_vecs.append(res.cpu())
         struct_vecs = torch.cat(struct_vecs, 0)
         for key, sv in zip(keys, struct_vecs):
             encoder_cache[key] = sv
