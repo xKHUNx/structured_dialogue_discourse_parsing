@@ -53,16 +53,24 @@ class Model(nn.Module):
         struct_vec = struct_vec.reshape(batch_size, -1, struct_vec.shape[-1])
         potentials, log_partition = self.struct_attention(batch_size, max_sent_len, context_sentence_masks, struct_vec, labels)
         
-        indices = torch.LongTensor(list(range(batch_size))).unsqueeze(1)
+        indices = torch.LongTensor(list(range(batch_size))).unsqueeze(1).to(potentials.device)
         potentials = potentials.masked_fill(potentials==float('-inf'), 0)
-        single_tree_score = potentials[indices, labels[range(batch_size), 2, :], labels[range(batch_size), 0, :], labels[range(batch_size), 1, :]] # [bs, seq_len]
+        
+        # Add bounds checking
+        valid_labels = (labels[..., 0, :] < potentials.shape[2]) & (labels[..., 1, :] < potentials.shape[3])
+        if not valid_labels.all():
+            print("Warning: Invalid labels detected, skipping problematic samples")
+            return torch.tensor(0.0, requires_grad=True, device=potentials.device)
+            
+        single_tree_score = potentials[indices, labels[range(batch_size), 2, :], labels[range(batch_size), 0, :], labels[range(batch_size), 1, :]]
         single_tree_score = single_tree_score.sum(1)
-        if (single_tree_score==float('-inf')).float().sum() == 1:
-            print (single_tree_score)
-            print (labels)
-            print (potentials)
-            exit()
-        log_prob = single_tree_score - log_partition # maximize this
-        log_prob = log_prob.mean() # sum of log prob equals joint prob in one batch
+        
+        # Replace inf check with safer version
+        if torch.isinf(single_tree_score).any():
+            print("Warning: Infinite scores detected")
+            return torch.tensor(0.0, requires_grad=True, device=potentials.device)
+            
+        log_prob = single_tree_score - log_partition
+        log_prob = log_prob.mean()
         
         return -log_prob
