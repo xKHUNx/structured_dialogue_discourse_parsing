@@ -24,130 +24,146 @@ def set_seed(args):
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-def eval_running_model(dataloader, test_mode):
+def eval_running_model(dataloader, test_mode, device, model, args, num_relation_types):
     model.eval()
-    pkl_name = '{}_{}_{}_{}_cache.pkl'.format(test_mode, args.test_data_dir, args.max_num_test_contexts, args.max_contexts_length)
-
+    
+    # Pre-cache input encoding
+    pkl_name = f'{test_mode}_{args.test_data_dir}_{args.max_num_test_contexts}_{args.max_contexts_length}_cache.pkl'
     pkl_name = pkl_name.replace('/', '')
+    
     if not os.path.exists(pkl_name):
-        input_masks = []
-        input_types = []
-        str_keys = []
-        print('pre-caching...')
+        input_masks, input_types, str_keys = [], [], []
+        print('Pre-caching...')
         for step, batch in enumerate(tqdm(dataloader)):
             input_ids = batch[0].numpy()
             str_keys += [" ".join(item) for item in input_ids.astype(str)]
             input_masks += batch[1].numpy().tolist()
             input_types += batch[2].numpy().tolist()
-        mapping = {}
-        for str_key, masks, types in zip(str_keys, input_masks, input_types):
-            if str_key not in mapping:
-                mapping[str_key] = [str_key, masks, types]
-        with open(pkl_name, 'wb') as handle:
-            pickle.dump(mapping, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        mapping = {k: [k, m, t] for k, m, t in zip(str_keys, input_masks, input_types)}
+        with open(pkl_name, 'wb') as f:
+            pickle.dump(mapping, f, protocol=pickle.HIGHEST_PROTOCOL)
     else:
-        print('loading...')
-        with open(pkl_name, 'rb') as handle:
-            mapping = pickle.load(handle)
-   
-    # pass mapping for encoder to encode
+        print('Loading pre-cached mapping...')
+        with open(pkl_name, 'rb') as f:
+            mapping = pickle.load(f)
+    
+    # Encode all inputs
     with torch.no_grad(), torch.cuda.amp.autocast(enabled=args.fp16):
-        print('encoding...')
+        print('Encoding...')
         encoder_cache = model.encoder_inference(mapping)
-        print('inferencing...')
+        print('Running inference...')
         for step, batch in enumerate(tqdm(dataloader)):
             input_ids = batch[0].numpy()
             keys = [" ".join(item) for item in input_ids.astype(str)]
-            struct_vec = [encoder_cache[key] for key in keys]
-            struct_vec = torch.stack(struct_vec, 0)
+            struct_vec = torch.stack([encoder_cache[key] for key in keys], 0)
             model.inference_forward(struct_vec.to(device), batch[3].to(device), args.max_num_test_contexts)
     
-    tree_results = []
-    relation_types = []
-    for result in model.struct_attention.tree_results:
-        tree_result, predicted_types = result
+    # Collect results
+    tree_results, relation_types = [], []
+    for tree_result, predicted_types in model.struct_attention.tree_results:
         tree_results += tree_result
         relation_types += predicted_types
-
-    # clean up the tree results
-    model.struct_attention.tree_results = []
+    model.struct_attention.tree_results = []  # clear cache
     
-    with open(os.path.join(args.test_data_dir, '{}_links.json'.format(test_mode))) as infile:
-        gt = json.load(infile)
+    # Load ground truth
+    with open(os.path.join(args.test_data_dir, f'{test_mode}_links.json')) as f:
+        gt = json.load(f)
 
-    # Load relation database to get relation type names
-    relation_database_path = os.path.join(args.data_dir, 'relation_database.json')
+    # Load relation names
     relation_names = {}
+    relation_database_path = os.path.join(args.data_dir, 'relation_database.json')
     try:
         with open(relation_database_path) as f:
-            relation_database = json.load(f)
-        relation_names = {v: k for k, v in relation_database.items()}
-    except FileNotFoundError:
-        print(f"Warning: {relation_database_path} not found. Cannot map relation IDs to names.")
-    except json.JSONDecodeError:
-        print(f"Warning: Could not decode JSON from {relation_database_path}. Cannot map relation IDs to names.")
-
-    # Initialize metrics for each relation type
+            relation_db = json.load(f)
+        relation_names = {v: k for k, v in relation_db.items()}
+    except (FileNotFoundError, json.JSONDecodeError):
+        print(f"Warning: relation database not found or invalid: {relation_database_path}")
+    
+    # Initialize per-relation metrics
     relation_metrics = {i: {'tp': 0, 'fp': 0, 'fn': 0} for i in range(num_relation_types)}
+    
+    # Initialize micro counters
+    tp_total, fp_total, fn_total = 0, 0, 0
+    tp_link, fp_link, fn_link = 0, 0, 0
 
-    hits = 0
-    cnt_preds = 0
-    cnt_golds = 0
-
+    # Evaluate
     for ds, g, r in zip(tree_results, gt, relation_types):
-        all_d = set()
-        if args.link_only:
-            for d in ds:
-                d = set([(dd, idx+1) for idx, dd in enumerate(d[1:])]) # skip -1
-                all_d.update(d)
-            g_set = set([tuple(gg[:2]) for gg in g])
-        else:
-            for d in ds:
-                d_relations = []
-                for idx, dd in enumerate(d[1:]):
-                    pred_type = r[dd][idx+1]
-                    d_relations.append((dd, idx+1, pred_type))
-                    all_d.add((dd, idx+1, pred_type))
-                
-            g_set = set([tuple(gg) for gg in g])
+        all_pred, all_pred_link = set(), set()
+        all_gold, all_gold_link = set(), set()
 
-            # Update per-relation type metrics
-            for pred_item in all_d:
-                if pred_item in g_set:
-                    relation_metrics[pred_item[2]]['tp'] += 1
-                else:
-                    relation_metrics[pred_item[2]]['fp'] += 1
-            for gold_item in g_set:
-                if gold_item not in all_d:
-                    relation_metrics[gold_item[2]]['fn'] += 1
+        # Predicted
+        for d in ds:
+            for idx, dd in enumerate(d[1:]):  # skip root
+                pred_type = r[dd][idx+1]
+                all_pred.add((dd, idx+1, pred_type))
+                all_pred_link.add((dd, idx+1))  # link only
 
-        hits += len(all_d.intersection(g_set))
-        cnt_golds += len(g_set)
-        cnt_preds += len(all_d)
+        # Gold
+        for gg in g:
+            all_gold.add(tuple(gg))
+            all_gold_link.add(tuple(gg[:2]))  # link only
 
-    prec = hits/cnt_preds if cnt_preds > 0 else 0
-    rec = hits/cnt_golds if cnt_golds > 0 else 0
-    f1 = 2*prec*rec/(prec+rec) if (prec+rec) > 0 else 0
+        # Update micro-F1 (link+type)
+        for triplet in all_pred:
+            if triplet in all_gold:
+                tp_total += 1
+            else:
+                fp_total += 1
+        for triplet in all_gold:
+            if triplet not in all_pred:
+                fn_total += 1
 
-    results = {'f1': f1, 'precision': prec, 'recall': rec}
+        # Update link-only micro-F1
+        for link in all_pred_link:
+            if link in all_gold_link:
+                tp_link += 1
+            else:
+                fp_link += 1
+        for link in all_gold_link:
+            if link not in all_pred_link:
+                fn_link += 1
 
-    # Calculate and add per-relation type F1 scores
+        # Update per-relation F1
+        for pred_item in all_pred:
+            if pred_item in all_gold:
+                relation_metrics[pred_item[2]]['tp'] += 1
+            else:
+                relation_metrics[pred_item[2]]['fp'] += 1
+        for gold_item in all_gold:
+            if gold_item not in all_pred:
+                relation_metrics[gold_item[2]]['fn'] += 1
+
+    # Micro-F1 calculations
+    precision = tp_total / (tp_total + fp_total) if (tp_total + fp_total) > 0 else 0
+    recall = tp_total / (tp_total + fn_total) if (tp_total + fn_total) > 0 else 0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+
+    link_precision = tp_link / (tp_link + fp_link) if (tp_link + fp_link) > 0 else 0
+    link_recall = tp_link / (tp_link + fn_link) if (tp_link + fn_link) > 0 else 0
+    link_f1 = 2 * link_precision * link_recall / (link_precision + link_recall) if (link_precision + link_recall) > 0 else 0
+
+    results = {
+        'micro_f1': f1,
+        'micro_precision': precision,
+        'micro_recall': recall,
+        'link_f1': link_f1,
+        'link_precision': link_precision,
+        'link_recall': link_recall
+    }
+
+    # Per-relation F1
     for rel_id, metrics in relation_metrics.items():
-        tp = metrics['tp']
-        fp = metrics['fp']
-        fn = metrics['fn']
-
+        tp, fp, fn = metrics['tp'], metrics['fp'], metrics['fn']
         rel_prec = tp / (tp + fp) if (tp + fp) > 0 else 0
         rel_rec = tp / (tp + fn) if (tp + fn) > 0 else 0
         rel_f1 = 2 * rel_prec * rel_rec / (rel_prec + rel_rec) if (rel_prec + rel_rec) > 0 else 0
-        
         rel_name = relation_names.get(rel_id, f'Type_{rel_id}')
         results[f'{rel_name}_f1'] = rel_f1
         results[f'{rel_name}_precision'] = rel_prec
         results[f'{rel_name}_recall'] = rel_rec
 
     return results
-
+    
 def evaluate(args, epoch, global_step, dev_dataloader, test_dataloader, best_f1, model):
     dev_result = eval_running_model(dev_dataloader, 'dev')
     test_result = eval_running_model(test_dataloader, 'test')
