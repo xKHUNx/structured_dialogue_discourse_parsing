@@ -74,7 +74,22 @@ def eval_running_model(dataloader, test_mode):
     
     with open(os.path.join(args.test_data_dir, '{}_links.json'.format(test_mode))) as infile:
         gt = json.load(infile)
-    res = []
+
+    # Load relation database to get relation type names
+    relation_database_path = os.path.join(args.data_dir, 'relation_database.json')
+    relation_names = {}
+    try:
+        with open(relation_database_path) as f:
+            relation_database = json.load(f)
+        relation_names = {v: k for k, v in relation_database.items()}
+    except FileNotFoundError:
+        print(f"Warning: {relation_database_path} not found. Cannot map relation IDs to names.")
+    except json.JSONDecodeError:
+        print(f"Warning: Could not decode JSON from {relation_database_path}. Cannot map relation IDs to names.")
+
+    # Initialize metrics for each relation type
+    relation_metrics = {i: {'tp': 0, 'fp': 0, 'fn': 0} for i in range(num_relation_types)}
+
     hits = 0
     cnt_preds = 0
     cnt_golds = 0
@@ -85,27 +100,58 @@ def eval_running_model(dataloader, test_mode):
             for d in ds:
                 d = set([(dd, idx+1) for idx, dd in enumerate(d[1:])]) # skip -1
                 all_d.update(d)
-            g = set([tuple(gg[:2]) for gg in g])
+            g_set = set([tuple(gg[:2]) for gg in g])
         else:
             for d in ds:
-                d = set([(dd, idx+1, r[dd][idx+1]) for idx, dd in enumerate(d[1:])]) # skip -1
-                all_d.update(d)
-            d = all_d
-            g = set([tuple(gg) for gg in g])
+                d_relations = []
+                for idx, dd in enumerate(d[1:]):
+                    pred_type = r[dd][idx+1]
+                    d_relations.append((dd, idx+1, pred_type))
+                    all_d.add((dd, idx+1, pred_type))
+                
+            g_set = set([tuple(gg) for gg in g])
 
-        hits += len(d.intersection(g))
-        cnt_golds += len(g)
-        cnt_preds += len(d)
-    prec = hits/cnt_preds
-    rec = hits/cnt_golds
-    f1 = 2*prec*rec/(prec+rec)
+            # Update per-relation type metrics
+            for pred_item in all_d:
+                if pred_item in g_set:
+                    relation_metrics[pred_item[2]]['tp'] += 1
+                else:
+                    relation_metrics[pred_item[2]]['fp'] += 1
+            for gold_item in g_set:
+                if gold_item not in all_d:
+                    relation_metrics[gold_item[2]]['fn'] += 1
 
-    return {'f1':f1}
+        hits += len(all_d.intersection(g_set))
+        cnt_golds += len(g_set)
+        cnt_preds += len(all_d)
+
+    prec = hits/cnt_preds if cnt_preds > 0 else 0
+    rec = hits/cnt_golds if cnt_golds > 0 else 0
+    f1 = 2*prec*rec/(prec+rec) if (prec+rec) > 0 else 0
+
+    results = {'f1': f1, 'precision': prec, 'recall': rec}
+
+    # Calculate and add per-relation type F1 scores
+    for rel_id, metrics in relation_metrics.items():
+        tp = metrics['tp']
+        fp = metrics['fp']
+        fn = metrics['fn']
+
+        rel_prec = tp / (tp + fp) if (tp + fp) > 0 else 0
+        rel_rec = tp / (tp + fn) if (tp + fn) > 0 else 0
+        rel_f1 = 2 * rel_prec * rel_rec / (rel_prec + rel_rec) if (rel_prec + rel_rec) > 0 else 0
+        
+        rel_name = relation_names.get(rel_id, f'Type_{rel_id}')
+        results[f'{rel_name}_f1'] = rel_f1
+        results[f'{rel_name}_precision'] = rel_prec
+        results[f'{rel_name}_recall'] = rel_rec
+
+    return results
 
 def evaluate(args, epoch, global_step, dev_dataloader, test_dataloader, best_f1, model):
     dev_result = eval_running_model(dev_dataloader, 'dev')
     test_result = eval_running_model(test_dataloader, 'test')
-    print('Epoch %d, Global Step %d TST res:\n' % (epoch, global_step), dev_result)
+    print('Epoch %d, Global Step %d DEV res:\n' % (epoch, global_step), dev_result)
     print('Epoch %d, Global Step %d TST res:\n' % (epoch, global_step), test_result)
     log_wf.write('Global Step %d VAL res:\n' % global_step)
     log_wf.write('Global Step %d TST res:\n' % global_step)
