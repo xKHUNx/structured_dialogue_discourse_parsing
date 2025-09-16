@@ -19,7 +19,7 @@ do
           --seed $seed \
           --gpu $GPU_ID \
           --data_dir data/diam \
-          --max_num_test_contexts 20 \
+          --max_num_test_contexts 774 \
           --eval \
           --fp16 \
           $1
