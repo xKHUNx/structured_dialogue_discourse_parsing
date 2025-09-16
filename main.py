@@ -65,6 +65,30 @@ def eval_running_model(dataloader, test_mode, device, model, args, num_relation_
         relation_types += predicted_types
     model.struct_attention.tree_results = []  # clear cache
     
+    # Save predictions in JSON format
+    predictions = []
+    for idx, (ds, r) in enumerate(zip(tree_results, relation_types)):
+        entry = {
+            "id": idx,  # Using simple index since dataset doesn't contain explicit IDs
+            "relations": []
+        }
+        for d in ds:
+            for child_idx, parent in enumerate(d[1:]):  # skip root
+                # Ensure relation_names is populated before using it
+                rel_type_id = r[parent][child_idx+1]
+                rel_type_name = relation_names.get(rel_type_id, f'Type_{rel_type_id}')
+                entry["relations"].append({
+                    "type": rel_type_name,
+                    "x": parent,
+                    "y": child_idx+1
+                })
+        predictions.append(entry)
+    
+    # Write predictions to file
+    output_file = os.path.join(args.output_dir, f'{test_mode}_predictions.json')
+    with open(output_file, 'w') as f:
+        json.dump(predictions, f, indent=2)
+
     # Load ground truth
     with open(os.path.join(args.test_data_dir, f'{test_mode}_links.json')) as f:
         gt = json.load(f)
