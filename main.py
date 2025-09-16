@@ -65,6 +65,20 @@ def eval_running_model(dataloader, test_mode, device, model, args, num_relation_
         relation_types += predicted_types
     model.struct_attention.tree_results = []  # clear cache
     
+    # Load ground truth
+    with open(os.path.join(args.test_data_dir, f'{test_mode}_links.json')) as f:
+        gt = json.load(f)
+
+    # Load relation names
+    relation_names = {}
+    relation_database_path = os.path.join(args.data_dir, 'relation_database.json')
+    try:
+        with open(relation_database_path) as f:
+            relation_db = json.load(f)
+        relation_names = {v: k for k, v in relation_db.items()}
+    except (FileNotFoundError, json.JSONDecodeError):
+        print(f"Warning: relation database not found or invalid: {relation_database_path}")
+
     # Save predictions in JSON format
     predictions = []
     for idx, (ds, r) in enumerate(zip(tree_results, relation_types)):
@@ -88,20 +102,6 @@ def eval_running_model(dataloader, test_mode, device, model, args, num_relation_
     output_file = os.path.join(args.output_dir, f'{test_mode}_predictions.json')
     with open(output_file, 'w') as f:
         json.dump(predictions, f, indent=2)
-
-    # Load ground truth
-    with open(os.path.join(args.test_data_dir, f'{test_mode}_links.json')) as f:
-        gt = json.load(f)
-
-    # Load relation names
-    relation_names = {}
-    relation_database_path = os.path.join(args.data_dir, 'relation_database.json')
-    try:
-        with open(relation_database_path) as f:
-            relation_db = json.load(f)
-        relation_names = {v: k for k, v in relation_db.items()}
-    except (FileNotFoundError, json.JSONDecodeError):
-        print(f"Warning: relation database not found or invalid: {relation_database_path}")
     
     # Initialize per-relation metrics
     relation_metrics = {i: {'tp': 0, 'fp': 0, 'fn': 0} for i in range(num_relation_types)}
@@ -300,7 +300,7 @@ if __name__ == '__main__':
         state_save_path = os.path.join(args.encoder_model, 'pytorch_model.bin')
         print('Loading parameters from', state_save_path)
         model.load_state_dict(torch.load(state_save_path, map_location=torch.device('cpu')))
-        test_result = eval_running_model(test_dataloader, 'test')
+        test_result = eval_running_model(test_dataloader, 'test', device, model, args, num_relation_types)
         print(test_result)
         exit()
     else:
