@@ -44,7 +44,7 @@ for data in raw_data:
             edges.append((x, y, relation_database[relation['type']]))
 
     for i in range(len(data['edus'])):
-        if i+1 not in parents:
+        if i+1 not in parents and i+1 < args.num_contexts: # Added num_contexts check
             if args.link_only:
                 edges.append((0, i+1, 0))
             else:
