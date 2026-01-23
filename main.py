@@ -187,10 +187,10 @@ def eval_running_model(dataloader, test_mode, device, model, args, num_relation_
         results[f'{rel_name}_recall'] = rel_rec
 
     return results
-    
-def evaluate(args, epoch, global_step, dev_dataloader, test_dataloader, best_f1, model):
-    dev_result = eval_running_model(dev_dataloader, 'dev')
-    test_result = eval_running_model(test_dataloader, 'test')
+
+def evaluate(args, epoch, global_step, dev_dataloader, test_dataloader, best_f1, model, device, num_relation_types):
+    dev_result = eval_running_model(dev_dataloader, 'dev', device, model, args, num_relation_types)
+    test_result = eval_running_model(test_dataloader, 'test', device, model, args, num_relation_types)
     print('Epoch %d, Global Step %d DEV res:\n' % (epoch, global_step), dev_result)
     print('Epoch %d, Global Step %d TST res:\n' % (epoch, global_step), test_result)
     log_wf.write('Global Step %d VAL res:\n' % global_step)
@@ -198,14 +198,14 @@ def evaluate(args, epoch, global_step, dev_dataloader, test_dataloader, best_f1,
     log_wf.write(str(dev_result) + '\n')
     log_wf.write(str(test_result) + '\n')
     # save model
-    if dev_result['f1'] > best_f1:
+    if dev_result['micro_f1'] > best_f1:
         # save model
         state_save_path = os.path.join(args.output_dir, 'pytorch_model.bin')
         print('[Saving at]', state_save_path)
         log_wf.write('[Saving at] %s\n' % state_save_path)
         torch.save(model.state_dict(), state_save_path)
 
-    return max(best_f1, dev_result['f1'])
+    return max(best_f1, dev_result['micro_f1'])
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -356,6 +356,6 @@ if __name__ == '__main__':
                         print(global_step, tr_loss / nb_tr_steps)
                         log_wf.write('%d\t%f\n' % (global_step, tr_loss / nb_tr_steps))
                         if args.cross_domain:
-                            best_f1 = evaluate(args, epoch, global_step, dev_dataloader, test_dataloader, best_f1, model)
+                            best_f1 = evaluate(args, epoch, global_step, dev_dataloader, test_dataloader, best_f1, model, device, num_relation_types)
         
-        best_f1 = evaluate(args, epoch, global_step, dev_dataloader, test_dataloader, best_f1, model)
+        best_f1 = evaluate(args, epoch, global_step, dev_dataloader, test_dataloader, best_f1, model, device, num_relation_types)
