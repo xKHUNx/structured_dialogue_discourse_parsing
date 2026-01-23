@@ -22,6 +22,7 @@ do
           --max_num_test_contexts 20 \
           --eval \
           --fp16 \
+          --output_dir data/diam/test_predictions.json
           $1
     done
   done
